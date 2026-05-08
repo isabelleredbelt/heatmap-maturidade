@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Heatmap de Maturidade</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Sora:wght@300;400;500;600&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --p0: #EEEDFE; --p0t: #3C3489;
+    --p1: #CECBF6; --p1t: #26215C;
+    --p2: #AFA9EC; --p2t: #26215C;
+    --p3: #534AB7; --p3t: #EEEDFE;
+    --p4: #26215C; --p4t: #CECBF6;
+    --bg: #ffffff;
+    --bg2: #f5f5f3;
+    --bg3: #eeede8;
+    --text: #1a1a18;
+    --muted: #5f5e5a;
+    --faint: #888780;
+    --border: rgba(0,0,0,0.10);
+    --border2: rgba(0,0,0,0.18);
+    --radius: 8px;
+    --radius-lg: 12px;
+  }
+
+  body {
+    font-family: 'Sora', sans-serif;
+    background: var(--bg2);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ── LOADING SCREEN ── */
+  #loading {
+    position: fixed; inset: 0;
+    background: var(--p4);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 16px; z-index: 100;
+    transition: opacity .4s;
+  }
+  #loading h1 { font-size: 22px; font-weight: 600; color: var(--p4t); }
+  #loading p  { font-size: 13px; color: var(--p1); font-family: 'DM Mono', monospace; }
+  .spinner {
+    width: 32px; height: 32px;
+    border: 3px solid var(--p3);
+    border-top-color: var(--p1);
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── LAYOUT ── */
+  header {
+    background: var(--p4);
+    padding: 18px 32px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap;
+    position: sticky; top: 0; z-index: 10;
+    border-bottom: 1px solid rgba(255,255,255,.08);
+  }
+  .header-left h1 { font-size: 16px; font-weight: 600; color: var(--p4t); letter-spacing: -.01em; }
+  .header-left p  { font-size: 11px; color: var(--p1); margin-top: 2px; font-family: 'DM Mono', monospace; }
+
+  .legend {
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  }
+  .leg { display: flex; align-items: center; gap: 5px; font-size: 10px; font-family: 'DM Mono', monospace; color: var(--p1); }
+  .leg-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  .leg-empty { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; background: rgba(255,255,255,.15); border: 1.5px dashed rgba(255,255,255,.4); }
+
+  main { max-width: 980px; margin: 0 auto; padding: 24px 20px 60px; }
+
+  /* ── AREA TABS ── */
+  .area-tabs { display: flex; gap: 6px; margin-bottom: 20px; }
+  .tab {
+    padding: 7px 18px; border-radius: 20px;
+    border: 1px solid var(--border2);
+    font-size: 12px; font-weight: 500; cursor: pointer;
+    background: var(--bg); color: var(--muted);
+    font-family: 'Sora', sans-serif;
+    transition: all .15s;
+  }
+  .tab:hover { border-color: var(--p2); color: var(--p2t); }
+  .tab.active { background: var(--p4); color: var(--p4t); border-color: var(--p4); }
+
+  /* ── SUMMARY CARDS ── */
+  .summary { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 20px; }
+  .sum-card { border-radius: var(--radius); padding: 12px 10px; text-align: center; }
+  .sum-label { font-size: 10px; font-family: 'DM Mono', monospace; margin-bottom: 4px; opacity: .75; }
+  .sum-val   { font-size: 22px; font-weight: 600; }
+  .sum-pct   { font-size: 10px; margin-top: 2px; opacity: .7; }
+
+  /* ── PROGRESS BARS ── */
+  .progress-section { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px 20px; margin-bottom: 20px; }
+  .progress-title { font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); font-family: 'DM Mono', monospace; margin-bottom: 12px; }
+  .prog-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; }
+  .prog-row { display: flex; align-items: center; gap: 8px; }
+  .prog-cat { font-size: 11px; font-family: 'DM Mono', monospace; color: var(--muted); width: 140px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .prog-bar-wrap { flex: 1; height: 5px; background: var(--bg2); border-radius: 3px; overflow: hidden; }
+  .prog-bar { height: 100%; border-radius: 3px; background: var(--p3); transition: width .35s; }
+  .prog-avg { font-size: 10px; font-family: 'DM Mono', monospace; color: var(--faint); width: 24px; text-align: right; }
+
+  /* ── SEARCH ── */
+  .search-row { margin-bottom: 16px; }
+  .search-input {
+    width: 100%; padding: 9px 14px;
+    border-radius: var(--radius); border: 1px solid var(--border2);
+    background: var(--bg); font-size: 13px;
+    font-family: 'Sora', sans-serif; color: var(--text);
+    outline: none; transition: border-color .15s;
+  }
+  .search-input:focus { border-color: var(--p2); }
+  .search-input::placeholder { color: var(--faint); }
+
+  /* ── CONTENT GRID ── */
+  .content-section { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+  .section-header {
+    font-size: 10px; font-weight: 600; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--p3t);
+    font-family: 'DM Mono', monospace;
+    padding: 10px 16px 8px;
+    background: var(--p3);
+    border-top: 1px solid var(--border);
+  }
+  .section-header:first-child { border-top: none; }
+
+  .item {
+    display: grid; grid-template-columns: 1fr auto;
+    align-items: center; gap: 12px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    transition: background .1s;
+  }
+  .item:last-child { border-bottom: none; }
+  .item.unrated { background: repeating-linear-gradient(135deg, var(--bg2), var(--bg2) 5px, var(--bg) 5px, var(--bg) 10px); }
+  .item.rated   { background: var(--bg); }
+  .item:hover   { background: var(--p0) !important; }
+
+  .item-label { font-size: 12px; color: var(--text); line-height: 1.4; }
+  .item-cat   { font-size: 10px; color: var(--faint); font-family: 'DM Mono', monospace; }
+
+  /* ── RATING BUTTONS ── */
+  .rater { display: flex; gap: 3px; flex-shrink: 0; }
+  .btn {
+    width: 30px; height: 28px;
+    border-radius: 5px;
+    border: 1px solid var(--border2);
+    background: var(--bg);
+    cursor: pointer;
+    font-size: 10px; font-family: 'DM Mono', monospace; font-weight: 500;
+    color: var(--faint);
+    transition: all .1s;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .btn:hover { border-color: var(--p2); color: var(--p2t); background: var(--p0); }
+
+  .btn.sel-0 { background: var(--p0); border: 2px solid var(--p0t); color: var(--p0t); font-weight: 700; }
+  .btn.sel-1 { background: var(--p1); border: 2px solid var(--p1t); color: var(--p1t); font-weight: 700; }
+  .btn.sel-2 { background: var(--p2); border: 2px solid var(--p2t); color: var(--p2t); font-weight: 700; }
+  .btn.sel-3 { background: var(--p3); border: 2px solid #8880e0; color: var(--p3t); font-weight: 700; }
+  .btn.sel-4 { background: var(--p4); border: 2px solid #534AB7; color: var(--p4t); font-weight: 700; }
+
+  /* ── FOOTER ACTIONS ── */
+  .footer-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; flex-wrap: wrap; }
+  .action-btn {
+    padding: 9px 20px; border-radius: var(--radius);
+    border: 1px solid var(--border2);
+    background: var(--bg); font-size: 12px;
+    font-family: 'Sora', sans-serif; cursor: pointer;
+    color: var(--text); font-weight: 500;
+    transition: all .15s;
+  }
+  .action-btn:hover { background: var(--p4); color: var(--p4t); border-color: var(--p4); }
+  .action-btn.danger { color: #a32d2d; border-color: #f09595; }
+  .action-btn.danger:hover { background: #fcebeb; border-color: #a32d2d; color: #a32d2d; }
+
+  /* ── SAVE INDICATOR ── */
+  #save-badge {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--p4); color: var(--p4t);
+    font-size: 11px; font-family: 'DM Mono', monospace;
+    padding: 6px 14px; border-radius: 20px;
+    opacity: 0; transition: opacity .3s;
+    pointer-events: none;
+  }
+  #save-badge.show { opacity: 1; }
+
+  /* ── EMPTY STATE ── */
+  .empty { padding: 32px; text-align: center; color: var(--faint); font-size: 13px; }
+
+  @media (max-width: 640px) {
+    header { padding: 14px 16px; }
+    main { padding: 16px 12px 48px; }
+    .summary { grid-template-columns: repeat(3, 1fr); }
+    .prog-grid { grid-template-columns: 1fr; }
+    .item { grid-template-columns: 1fr; }
+    .rater { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <h1>Heatmap de Maturidade</h1>
+  <p id="loading-msg">Carregando conteúdos...</p>
+</div>
+
+<header>
+  <div class="header-left">
+    <h1>Heatmap de Maturidade Individual</h1>
+    <p>Notas salvas automaticamente no navegador</p>
+  </div>
+  <div class="legend">
+    <span class="leg"><span class="leg-empty"></span>Sem nota</span>
+    <span class="leg"><span class="leg-dot" style="background:#EEEDFE;border:1px solid #3C3489;"></span>N0 Nunca vi</span>
+    <span class="leg"><span class="leg-dot" style="background:#CECBF6;border:1px solid #26215C;"></span>N1 Ouvi/li</span>
+    <span class="leg"><span class="leg-dot" style="background:#AFA9EC;border:1px solid #26215C;"></span>N2 Experimentei</span>
+    <span class="leg"><span class="leg-dot" style="background:#534AB7;border:1px solid #8880e0;"></span>N3 Autônomo</span>
+    <span class="leg"><span class="leg-dot" style="background:#26215C;border:1px solid #534AB7;"></span>N4 Ensino</span>
+  </div>
+</header>
+
+<main>
+  <div class="area-tabs" id="tabs"></div>
+  <div class="summary" id="summary"></div>
+  <div class="progress-section">
+    <div class="progress-title">Maturidade média por categoria</div>
+    <div class="prog-grid" id="progress"></div>
+  </div>
+  <div class="search-row">
+    <input class="search-input" id="search" placeholder="Buscar conteúdo ou categoria..." oninput="renderGrid()">
+  </div>
+  <div class="content-section" id="grid"></div>
+  <div class="footer-actions">
+    <button class="action-btn danger" onclick="confirmReset()">Limpar todas as notas</button>
+    <button class="action-btn" onclick="exportCSV()">Exportar CSV ↓</button>
+  </div>
+</main>
+
+<div id="save-badge">✓ Salvo</div>
+
+<script>
+const STORAGE_KEY = 'heatmap_maturidade_v1';
+const NIVEL_ORDER = ['Iniciante', 'Intermediário', 'Avançado', 'Especialista'];
+const NIVEL_COLORS = { Iniciante: '#EAF3DE', Intermediário: '#FAEEDA', Avançado: '#E6F1FB', Especialista: '#EEEDFE' };
+
+let RAW = [];
+let scores = {};
+let currentArea = '';
+let areas = [];
+let saveTimer = null;
+
+// ── LOAD EXCEL ──────────────────────────────────────────────
+async function loadExcel() {
+  try {
+    const res = await fetch('./conteudos.xlsx');
+    if (!res.ok) throw new Error('Arquivo não encontrado');
+    const buf = await res.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+    // header row: [Área, Categoria, Tópico, Nível]
+    for (let i = 1; i < rows.length; i++) {
+      const [area, cat, topico, nivel] = rows[i];
+      if (area && cat && topico && nivel) {
+        RAW.push([String(area).trim(), String(cat).trim(), String(topico).trim(), String(nivel).trim()]);
+      }
+    }
+    areas = [...new Set(RAW.map(r => r[0]))];
+    currentArea = areas[0];
+    document.getElementById('loading-msg').textContent = `${RAW.length} conteúdos carregados.`;
+  } catch (e) {
+    document.getElementById('loading-msg').textContent = 'Erro ao carregar Excel: ' + e.message;
+    await new Promise(r => setTimeout(r, 3000));
+  }
+}
+
+// ── STORAGE ─────────────────────────────────────────────────
+function loadScores() {
+  try { scores = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); }
+  catch { scores = {}; }
+}
+function saveScores() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(scores));
+  const badge = document.getElementById('save-badge');
+  badge.classList.add('show');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => badge.classList.remove('show'), 1800);
+}
+
+// ── KEY ──────────────────────────────────────────────────────
+function k(r) { return r[0] + '§' + r[1] + '§' + r[2]; }
+
+// ── RENDER TABS ──────────────────────────────────────────────
+function renderTabs() {
+  document.getElementById('tabs').innerHTML = areas.map(a =>
+    `<button class="tab${a === currentArea ? ' active' : ''}" onclick="setArea('${a}')">${a}</button>`
+  ).join('');
+}
+
+// ── RENDER SUMMARY ───────────────────────────────────────────
+function renderSummary() {
+  const items = RAW.filter(r => r[0] === currentArea);
+  const total = items.length;
+  const unrated = items.filter(r => scores[k(r)] === undefined).length;
+  const counts = [0, 0, 0, 0, 0];
+  items.forEach(r => { const s = scores[k(r)]; if (s !== undefined) counts[s]++; });
+
+  const colors = ['#EEEDFE','#CECBF6','#AFA9EC','#534AB7','#26215C'];
+  const textc  = ['#3C3489','#26215C','#26215C','#EEEDFE','#CECBF6'];
+  const labels = ['N0','N1','N2','N3','N4'];
+
+  let html = `<div class="sum-card" style="background:#f0efe8;border:1px solid #d3d1c7;">
+    <div class="sum-label" style="color:#888780;">Sem nota</div>
+    <div class="sum-val" style="color:#2c2c2a;">${unrated}</div>
+    <div class="sum-pct" style="color:#5f5e5a;">${Math.round(unrated/total*100)}%</div>
+  </div>`;
+  html += [0,1,2,3,4].map(i => `
+    <div class="sum-card" style="background:${colors[i]};border:1px solid ${textc[i]}22;">
+      <div class="sum-label" style="color:${textc[i]};">${labels[i]}</div>
+      <div class="sum-val"   style="color:${textc[i]};">${counts[i]}</div>
+      <div class="sum-pct"   style="color:${textc[i]};">${Math.round(counts[i]/total*100)}%</div>
+    </div>`).join('');
+  document.getElementById('summary').innerHTML = html;
+}
+
+// ── RENDER PROGRESS ──────────────────────────────────────────
+function renderProgress() {
+  const items = RAW.filter(r => r[0] === currentArea);
+  const cats = {};
+  items.forEach(r => {
+    if (!cats[r[1]]) cats[r[1]] = { sum: 0, rated: 0 };
+    const s = scores[k(r)];
+    if (s !== undefined) { cats[r[1]].sum += s; cats[r[1]].rated++; }
+  });
+  const sorted = Object.entries(cats)
+    .map(([cat, v]) => ({ cat, avg: v.rated ? v.sum / v.rated : 0 }))
+    .sort((a, b) => b.avg - a.avg);
+
+  document.getElementById('progress').innerHTML = sorted.map(s => `
+    <div class="prog-row">
+      <span class="prog-cat" title="${s.cat}">${s.cat}</span>
+      <div class="prog-bar-wrap"><div class="prog-bar" style="width:${Math.round(s.avg/4*100)}%"></div></div>
+      <span class="prog-avg">${s.avg.toFixed(1)}</span>
+    </div>`).join('');
+}
+
+// ── RENDER GRID ───────────────────────────────────────────────
+function renderGrid() {
+  const q = document.getElementById('search').value.toLowerCase();
+  let items = RAW.filter(r => r[0] === currentArea);
+  if (q) items = items.filter(r => r[2].toLowerCase().includes(q) || r[1].toLowerCase().includes(q));
+
+  const byNivel = {};
+  NIVEL_ORDER.forEach(n => byNivel[n] = []);
+  items.forEach(r => { if (byNivel[r[3]]) byNivel[r[3]].push(r); });
+
+  let html = '';
+  NIVEL_ORDER.forEach(nivel => {
+    const list = byNivel[nivel];
+    if (!list || !list.length) return;
+    const color = NIVEL_COLORS[nivel] || '#f5f5f3';
+    html += `<div class="section-header" style="background:${color};color:#26215C;">${nivel}</div>`;
+    list.forEach(r => {
+      const rk = k(r);
+      const cur = scores[rk];
+      const rated = cur !== undefined;
+      const btns = [0,1,2,3,4].map(n => {
+        const sel = cur === n ? ` sel-${n}` : '';
+        return `<button class="btn${sel}" onclick="setScore(this,${n})" data-key="${rk.replace(/'/g,"\\'")}">N${n}</button>`;
+      }).join('');
+      const itemId = 'item-' + rk.replace(/[^\w]/g, '_');
+      html += `<div class="item ${rated ? 'rated' : 'unrated'}" id="${itemId}">
+        <div>
+          <div class="item-label">${r[2]}</div>
+          <div class="item-cat">${r[1]}</div>
+        </div>
+        <div class="rater">${btns}</div>
+      </div>`;
+    });
+  });
+  document.getElementById('grid').innerHTML = html ||
+    '<div class="empty">Nenhum resultado para "<strong>' + q + '</strong>"</div>';
+}
+
+// ── SET SCORE ─────────────────────────────────────────────────
+function setScore(btn, n) {
+  const rk = btn.dataset.key;
+  scores[rk] = n;
+  saveScores();
+  btn.parentElement.querySelectorAll('.btn').forEach((b, i) => {
+    b.className = 'btn' + (i === n ? ` sel-${i}` : '');
+  });
+  const itemEl = document.getElementById('item-' + rk.replace(/[^\w]/g, '_'));
+  if (itemEl) itemEl.className = 'item rated';
+  renderSummary();
+  renderProgress();
+}
+
+// ── AREA SWITCH ───────────────────────────────────────────────
+function setArea(a) {
+  currentArea = a;
+  document.getElementById('search').value = '';
+  render();
+}
+
+// ── EXPORT CSV ────────────────────────────────────────────────
+function exportCSV() {
+  let csv = '\uFEFF'; // BOM for Excel UTF-8
+  csv += 'Área,Categoria,Tópico,Nível Curricular,Nota,Descrição da Nota\n';
+  const desc = ['N0 – Nunca vi','N1 – Ouvi/li','N2 – Experimentei','N3 – Uso com autonomia','N4 – Posso ensinar'];
+  RAW.forEach(r => {
+    const s = scores[k(r)];
+    const nota = s !== undefined ? 'N' + s : 'sem nota';
+    const descr = s !== undefined ? desc[s] : '';
+    csv += `"${r[0]}","${r[1]}","${r[2]}","${r[3]}","${nota}","${descr}"\n`;
+  });
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'maturidade_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click(); URL.revokeObjectURL(url);
+}
+
+// ── RESET ─────────────────────────────────────────────────────
+function confirmReset() {
+  if (confirm('Tem certeza? Todas as notas serão apagadas permanentemente.')) {
+    scores = {};
+    saveScores();
+    render();
+  }
+}
+
+// ── MAIN RENDER ───────────────────────────────────────────────
+function render() {
+  renderTabs();
+  renderSummary();
+  renderProgress();
+  renderGrid();
+}
+
+// ── INIT ─────────────────────────────────────────────────────
+(async () => {
+  loadScores();
+  await loadExcel();
+  if (RAW.length > 0) {
+    render();
+    const loading = document.getElementById('loading');
+    loading.style.opacity = '0';
+    setTimeout(() => loading.style.display = 'none', 400);
+  }
+})();
+</script>
+</body>
+</html>
